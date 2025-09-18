@@ -12,17 +12,21 @@ Ops.vecvec <- function(e1, e2) {
     return(e1)
   }
 
-  args <- vec_cast_common(e1 = e1, e2 = e2)
-
   # Binary operation (shortcut method on attributes)
-  if (any(arg_len1 <- lengths(args) == 1)) {
-    res <- args[[which(!arg_len1)]]
-    attr(res, "v") <- .mapply(.Generic, list(attr(res, "v")), attr(args[[which(arg_len1)]], "v"))
-    return(if (bool_op) as.logical(res) else res)
-  }
+  # if (any(arg_len1 <- lengths(args) == 1)) {
+  #   res <- args[[which(!arg_len1)]]
+  #   attr(res, "v") <- .mapply(.Generic, list(attr(res, "v")), attr(args[[which(arg_len1)]], "v"))
+  #
+  #   # Return simple atomic boolean for boolean operations
+  #   return(if (bool_op) unvecvec(res) else res)
+  # }
 
   # Binary operation (complete method on values)
-  args <- vec_recycle_common(!!!args)
+  args <- vec_recycle_common(e1 = e1, e2 = e2)
+
+  # Ensure all args are vecvec types
+  which_vecvec <- vapply(args, inherits, logical(1L), what = "vecvec")
+  args[!which_vecvec] <- lapply(args[!which_vecvec], vecvec)
 
   # Compare sets of common vectors
   loc <- vec_group_loc(new_data_frame(lapply(args, field, "i")))
@@ -46,7 +50,7 @@ Ops.vecvec <- function(e1, e2) {
     list_unchop(res)[order(list_unchop(loc$loc))]
   } else {
     # Return vecvec type for arith
-    new_vecvec(
+    res <- new_vecvec(
       x = res,
       loc = vec_slice(
         data_frame(
@@ -54,8 +58,10 @@ Ops.vecvec <- function(e1, e2) {
           x = list_unchop(lapply(lengths(res), seq_len))
         ),
         order(list_unchop(loc$loc))
-      )
+      ),
+      class = restore_class(vec_ptype_common(!!!args[which_vecvec]))
     )
+    # vec_restore(res, vec_ptype_common(!!!args[which_vecvec]))
   }
 }
 
@@ -68,3 +74,10 @@ Math.vecvec <- function(x, ...) {
   # Detect if all listed prototypes are compatible, then collapse if flat
   x
 }
+
+#' @export
+vec_math.vecvec <- function(.fn, .x, ...) {
+  attr(.x, "v") <- lapply(attr(.x, "v"), .fn, ...)
+  unvecvec(.x)
+}
+

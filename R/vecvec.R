@@ -27,7 +27,7 @@
 #' @export
 new_vecvec <- function(x = list(), loc = NULL, class = character()) {
   if(is.null(loc)) {
-    size <- lengths(x)
+    size <- vapply(x, vec_size, integer(1L))
     loc <- if(identical(size, integer(0L))) {
       list(i = integer(), x = integer())
     } else {
@@ -48,6 +48,7 @@ new_vecvec <- function(x = list(), loc = NULL, class = character()) {
 #' Create a new vector of vectors
 #'
 #' @param ... Vectors to combine into a single vector without type coercion.
+#' @param class Name of subclass.
 #'
 #' @return A vector of vectors of class `vecvec`.
 #'
@@ -59,8 +60,8 @@ new_vecvec <- function(x = list(), loc = NULL, class = character()) {
 #' vecvec(Sys.Date(), rnorm(3), letters)
 #'
 #' @export
-vecvec <- function(...) {
-  vecvec_compress(new_vecvec(rlang::list2(...)))
+vecvec <- function(..., class = character()) {
+  vecvec_compress(new_vecvec(rlang::list2(...), class = class))
 }
 
 #' Convert a vecvec object into its underlying vector type
@@ -96,6 +97,10 @@ format.vecvec <- function(x, ...) {
   )
 }
 
+restore_class <- function(x) {
+  setdiff(class(x), c("vecvec", "vctrs_rcrd", "vctrs_vctr"))
+}
+
 #' @export
 vec_proxy.vecvec <- function(x, ...) {
   # Somewhat inefficient, copy pointers to vectors by row
@@ -106,10 +111,10 @@ vec_proxy.vecvec <- function(x, ...) {
 
 #' @export
 vec_proxy_equal.vecvec <- function(x, ...) {
-  # Assume duplicated vector values have been combined
-  vctrs::data_frame(
-    x = field(x, "x"), i = field(x, "i")
-  )
+  # TODO - implement using a faster method (e.g. hashing)
+  n_vecs <- length(attr(x, "v"))
+  i_offset <- cumsum(c(0, lengths(attr(x, "v"))[-n_vecs]))
+  list_unchop(lapply(attr(x, "v"), as.list))[i_offset[field(x, "i")] + field(x, "x")]
 }
 
 #' @export
@@ -126,33 +131,36 @@ vec_restore.vecvec <- function(x, to, ..., i = NULL) {
     loc = list(
       i = rep(i_loc, lengths(v_grp$loc))[order(list_unchop(v_grp$loc))],
       x = x$x
-    )
+    ),
+    class = restore_class(to)
   )
   return(vecvec_compress(res))
 }
 
 vec_cast_from_vecvec <- function(x, to, ...) {
   out <- lapply(attr(x, "v"), vec_cast, to = to, ...)
-  unlist(.mapply(function(i, x) out[[i]][[x]], new_data_frame(x), NULL))
+  vec_unchop(.mapply(function(i, x) out[[i]][[x]], new_data_frame(x), NULL))
 }
 
 vec_cast_to_vecvec <- function(x, to, ...) {
-  new_vecvec(list(x))
+  new_vecvec(list(x), class = restore_class(to))
 }
 
 #' @export
 vec_ptype2.vecvec <- function(x, y, ...) {
-  new_vecvec()
+  compat_class <- intersect(restore_class(x), restore_class(y))
+  new_vecvec(class = compat_class)
 }
 
 #' @export
 vec_ptype.vecvec <- function(x, ...) {
-  new_vecvec()
+  new_vecvec(class = restore_class(x))
 }
 
 #' @export
 vec_ptype2.vecvec.vecvec <- function(x, y, ...) {
-  new_vecvec()
+  compat_class <- intersect(restore_class(x), restore_class(y))
+  new_vecvec(class = compat_class)
 }
 
 
