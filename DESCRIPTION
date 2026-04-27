@@ -1,6 +1,6 @@
 Package: vecvec
 Title: Construct Mixed Type Data Structures with Vectors of Vectors
-Version: 0.2.1
+Version: 1.0.0
 Authors@R: c(
       person(
         given = "Mitchell",
@@ -9,20 +9,26 @@ Authors@R: c(
         email = "mail@mitchelloharawild.com",
         comment = c(ORCID = "0000-0001-6729-7695")
       ))
-Description: Mixed type vectors are useful for combining semantically similar classes. Some examples of semantically related classes include time across different granularities (e.g. daily, monthly, annual) and probability distributions (e.g. Normal, Uniform, Poisson). These groups of vector types typically share common statistical operations which vary in results with the attributes of each vector. The 'vecvec' data structure facilitates efficient storage and computation across multiple vectors within the same object.
+Description: Mixed type vectors are useful for combining semantically similar 
+  classes. Some examples of semantically related classes include time across 
+  different granularities (e.g. daily, monthly, annual) and probability 
+  distributions (e.g. Normal, Uniform, Poisson). These groups of vector types 
+  typically share common statistical operations which vary in results with the 
+  attributes of each vector. The 'vecvec' data structure facilitates efficient 
+  storage and computation across multiple vectors within the same object.
 License: MIT + file LICENSE
-Imports: rlang, vctrs
+Imports: rlang, S7, stats, vctrs
 Suggests: lifecycle, testthat (>= 3.0.0)
 Config/testthat/edition: 3
 Encoding: UTF-8
-RoxygenNote: 7.3.3
 URL: https://pkg.mitchelloharawild.com/vecvec/,
         https://github.com/mitchelloharawild/vecvec
 BugReports: https://github.com/mitchelloharawild/vecvec/issues
+Config/roxygen2/version: 7.3.3.9000
 NeedsCompilation: no
-Packaged: 2026-04-08 08:04:37 UTC; mitchell
+Packaged: 2026-04-27 17:25:27 UTC; mitchell
 Author: Mitchell O'Hara-Wild [aut, cre] (ORCID:
     <https://orcid.org/0000-0001-6729-7695>)
 Maintainer: Mitchell O'Hara-Wild <mail@mitchelloharawild.com>
 Repository: CRAN
-Date/Publication: 2026-04-08 08:40:02 UTC
+Date/Publication: 2026-04-27 17:40:02 UTC

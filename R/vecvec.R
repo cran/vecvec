@@ -1,170 +1,262 @@
-#' Construct a vector of vectors
+#' Create a vector of vectors
 #'
-#' new_vecvec() constructs a new vector of vectors from a list of vectors. It is meant to be performant, and does not check the inputs for correctness in any way. It is only safe to use after a call to df_list(), which collects and validates the columns used to construct the data frame.
+#' @description
+#' 
+#' `r lifecycle::badge('stable')`
 #'
-#' @param x An unnamed list of arbitrary vectors.
-#' @param loc A named list of value locations, with `i` identifying the vector index and `x` identifying the value index. By default, the order of appearance in `x` will be used.
-#' @param class Name of subclass.
+#' A `vecvec` is a vector that holds elements of different types without
+#' coercing them to a common type. Unlike a list of vectors, a `vecvec` behaves 
+#' as a flat vector (hence vector of vectors). This means that you can 
+#' operations (such as indexing, arithmetic, and statistics) apply across all
+#' elements of a `vecvec` as if they were combined into a single vector.
 #'
-#' @return A vector of vectors of class `vecvec`.
+#' Mixed-type vectors can be useful if you need to store heterogeneous data in a
+#' vector-like structure. In most cases, I believe this is bad practice for data
+#' analytics, but this could be useful for tidying up messy data. The most
+#' valuable use case for vecvec is as a data structure for mixed-type semantic
+#' vectors. This package is used by [mixtime](https://pkg.mitchelloharawild.com/mixtime/)
+#' and [distributional](https://pkg.mitchelloharawild.com/distributional/) to 
+#' create vectors of time with different chronons and distributions with 
+#' different shapes.
+#'
+#' To convert a `vecvec` back to a plain typed vector, use [unvecvec()], which
+#' casts all elements to a common type via [vctrs::vec_cast()].
+#'
+#' @param ... Vectors to combine. Each vector is stored as a separate typed
+#'   slot; no type coercion is performed.
+#'
+#' @return A `vecvec` object whose length equals the total number of elements
+#'   across all input vectors.
+#'
+#' @seealso [unvecvec()] to coerce a `vecvec` to a single-typed vector;
+#'   [is_vecvec()] to test whether an object is a `vecvec`.
 #'
 #' @examples
-#' # Create a vecvec prototype
-#' new_vecvec()
+#' # Mixed types are preserved without coercion
+#' vv <- vecvec(Sys.Date(), rnorm(3), letters)
+#' vv
 #'
-#' # Construct a vecvec from a list of vectors
-#' new_vecvec(list(letters, rnorm(10)))
-#'
-#' # Fully specify a vecvec with locations
-#' new_vecvec(
-#'   x = list(letters, rnorm(10)),
-#'   loc = list(
-#'     i = c(rep(1L, 3), rep(2L, 5), rep(1L, 23), rep(2L, 5)),
-#'     x = c(1:3, 1:5, 26:4, 6:10)
-#'   )
-#' )
+#' # .[i] Indexing works like a flat vector
+#' vv[c(1L, 3L, 7L)]
+#' 
+#' # .[[i]] drops to the original vector type
+#' vv[[2L]]
 #'
 #' @export
-new_vecvec <- function(x = list(), loc = NULL, class = character()) {
-  if(is.null(loc)) {
-    size <- vapply(x, vec_size, integer(1L))
-    loc <- if(identical(size, integer(0L))) {
-      list(i = integer(), x = integer())
-    } else {
-      list(
-        i = rep(seq_along(size), size),
-        x = list_unchop(lapply(size, seq_len))
-      )
+vecvec <- function(...) {
+  class_vecvec(x = rlang::list2(...))
+}
+
+#' Coerce a vector of vectors to a single typed vector
+#'
+#' @description
+#' 
+#' `r lifecycle::badge('stable')`
+#'
+#' Flattens a `vecvec` into a plain R vector by casting all elements to a
+#' common type. This is the inverse of [vecvec()].
+#'
+#' Type resolution follows vctrs coercion rules: when `ptype` is `NULL` the
+#' common type is determined automatically from the slots of `x` via
+#' [vctrs::vec_ptype_common()]. If no common type can be found (e.g. all slots
+#' are empty), the result falls back to `logical()`.
+#'
+#' @param x A `vecvec` object.
+#' @param ptype A prototype specifying the desired output type, e.g.
+#'   `character()` or `numeric()`. If `NULL` (the default), the common type is
+#'   inferred from the elements of `x` using [vctrs::vec_ptype_common()],
+#'   falling back to `logical()` when no common type can be determined. Passing
+#'   an explicit `ptype` is useful when you need a guaranteed output type
+#'   regardless of what `x` contains, or when automatic inference would pick an
+#'   undesirable type.
+#'
+#' @return A vector of length `length(x)` and type `ptype` (or the inferred
+#'   common type when `ptype = NULL`). Positions corresponding to `NA` indices
+#'   in the underlying `vecvec` structure are filled with `NA`.
+#'
+#' @seealso [vecvec()] to create a `vecvec`; [vctrs::vec_ptype_common()] for
+#'   the type inference rules; [vctrs::vec_cast()] for the casting rules.
+#'
+#' @examples
+#' vv <- vecvec(1:3, c(4.5, 5.5))
+#'
+#' # Automatic type inference: integer + double -> double
+#' unvecvec(vv)
+#'
+#' # Force a specific output type
+#' unvecvec(vv, ptype = character())
+#'
+#' @export
+unvecvec <- function(x, ptype = NULL) {
+  if (!is_vecvec(x)) {
+    stop("`x` must be a vecvec object", call. = FALSE)
+  }
+
+  if ((len <- length(x)) == 0L) {
+    return(unlist(x@x))
+  }
+
+  # Cast mixed vector types to common type
+  if (is.null(ptype)) {
+    ptype <- vec_ptype_common(!!!x@x) %||% logical()
+    # Use safe casting from vctrs
+    vec_cast_unsafe <- vec_cast
+  }
+  x@x <- lapply(x@x, vec_cast_unsafe, to = ptype)
+
+  # Construct output single-typed vector
+  res <- vec_init(ptype, n = len)
+  pos <- !is.na(S7_data(x))
+  res[pos] <- vec_c(!!!x@x)[S7_data(x)[pos]]
+  res
+}
+
+# ------------------------------------------------------------------------------
+# Display methods
+# ------------------------------------------------------------------------------
+method(print, class_vecvec) <- function(x, ...) {
+  vctrs::obj_print(x, ...)
+}
+method(format, class_vecvec) <- function(x, ...) {
+  fmt <- vec_c(!!!lapply(x@x, format, ...), .ptype = character())[S7_data(x)]
+  dim(fmt) <- dim(x)
+  dimnames(fmt) <- dimnames(x)
+  fmt
+}
+
+# ------------------------------------------------------------------------------
+# Attribute methods
+# ------------------------------------------------------------------------------
+# @method length<- vecvec::vecvec
+#' @rawNamespace S3method(`length<-`,"vecvec::vecvec")
+`length<-.vecvec::vecvec` <- function(x, value) x[seq_len(value)]
+
+#' Test if an object is a vecvec
+#'
+#' @param x Object to test.
+#'
+#' @return `TRUE` if `x` inherits from `class_vecvec`, `FALSE` otherwise.
+#'
+#' @seealso [vecvec()] to create a vecvec object.
+#'
+#' @examples
+#' vv <- vecvec(1:3, letters)
+#' is_vecvec(vv)
+#' is_vecvec(1:3)
+#'
+#' @export
+is_vecvec <- function(x) S7_inherits(x, class_vecvec)
+
+# ------------------------------------------------------------------------------
+# Indexing methods
+# ------------------------------------------------------------------------------
+method(`[`, class_vecvec) <- function(x, i, ...) {
+  idx <- S7_data(x)[i, ...]
+  not_na <- !is.na(idx)
+
+  if (!any(not_na)) {
+    return(S7_class(x)(x = list(), i = idx))
+  }
+
+  idx_nn <- idx[not_na]
+
+  # Slot start positions in original x@x
+  orig_starts <- c(0L, cumsum(lengths(x@x[-length(x@x)])))
+
+  # Which original slot each selected element belongs to
+  pos <- findInterval(idx_nn, orig_starts, left.open = TRUE)
+
+  # Drop entirely unreferenced slots
+  keep <- sort(unique(pos))
+  all_kept <- length(keep) == length(x@x)
+
+  x@x <- x@x[keep]
+  orig_starts <- orig_starts[keep]
+
+  new_slot <- match(pos, keep)
+  local_idx <- idx_nn - orig_starts[new_slot] # 1-based within slot
+
+  # TODO - remove unreferenced values from x@x if *all* references are dropped
+  if (!anyDuplicated(idx_nn)) {
+    slot_lengths <- lengths(x@x)
+    groups <- split(seq_along(new_slot), new_slot)
+
+    for (k in seq_along(x@x)) {
+      el <- groups[[k]]
+      sel <- local_idx[el]
+      u <- unique(sel)
+      if (length(u) < slot_lengths[k]) {
+        local_idx[el] <- match(sel, u)
+        x@x[[k]] <- x@x[[k]][u]
+      }
     }
   }
 
-  new_rcrd(
-    loc,
-    v = x,
-    class = c(class, "vecvec")
+  # Assign new vecvec indices
+  new_starts <- c(0L, cumsum(lengths(x@x[-length(x@x)])))
+  idx[not_na] <- new_starts[new_slot] + local_idx
+  dim(x) <- NULL
+  S7_data(x) <- idx
+  dim(x) <- dim(idx)
+
+  x
+}
+
+method(`[[`, class_vecvec) <- function(x, i, ...) {
+  idx <- S7_data(x)[i]
+  len <- c(0L, cumsum(lengths(x@x[-length(x@x)])))
+  pos <- findInterval(idx, len, left.open = TRUE)
+  x@x[[pos]][[idx - len[pos]]]
+}
+
+# ------------------------------------------------------------------------------
+# Combining methods
+# ------------------------------------------------------------------------------
+method(c, class_vecvec) <- function(..., recursive = FALSE) {
+  dots <- unname(rlang::list2(...))
+  is_vv <- vapply(dots, is_vecvec, logical(1L))
+  dots[!is_vv] <- lapply(dots[!is_vv], vecvec)
+
+  # TODO - reduce structure into a common vecvec
+  i_offsets <- cumsum(vapply(
+    dots[-length(dots)],
+    function(x) sum(lengths(x@x)),
+    integer(1L)
+  ))
+
+  x <- lapply(dots, function(x) x@x)
+  i <- c(
+    S7_data(dots[[1L]]),
+    .mapply(
+      function(x, j) S7_data(x) + j,
+      list(x = dots[-1L], j = i_offsets),
+      NULL
+    )
+  )
+
+  S7_class(..1)(
+    x = unlist(x, recursive = FALSE),
+    i = unlist(i, recursive = FALSE)
   )
 }
 
-#' Create a new vector of vectors
-#'
-#' @param ... Vectors to combine into a single vector without type coercion.
-#' @param class Name of subclass.
-#'
-#' @return A vector of vectors of class `vecvec`.
-#'
-#' @seealso [unvecvec()] coerces the mixed-type vector into a single-typed
-#' regular vector. [new_vecvec()] is a performant alternative that accepts a
-#' list of vectors rather than `...` (suitable for R packages).
-#'
-#' @examples
-#' vecvec(Sys.Date(), rnorm(3), letters)
-#'
-#' @export
-vecvec <- function(..., class = character()) {
-  vecvec_compress(new_vecvec(rlang::list2(...), class = class))
+# ------------------------------------------------------------------------------
+# Array methods
+# ------------------------------------------------------------------------------
+
+# @method as.vector vecvec::vecvec
+#' @rawNamespace S3method(as.vector,"vecvec::vecvec")
+`as.vector.vecvec::vecvec` <- function(x, mode = "any") x
+
+# @method dim<- vecvec::vecvec
+#' @rawNamespace S3method(`dim<-`,"vecvec::vecvec")
+`dim<-.vecvec::vecvec` <- function(x, value) {
+  attr(x, "dim") <- value
+  x
 }
-
-#' Convert a vecvec object into its underlying vector type
-#'
-#' `r lifecycle::badge('experimental')`
-#'
-#' @param x A vecvec to unvecvec (convert to its underlying vector type)
-#' @inheritParams vctrs::list_unchop
-#'
-#' @return A simple vector, all containing the same type of data.
-#'
-#' @export
-unvecvec <- function(x, ..., ptype = NULL) {
-  n_vecs <- length(attr(x, "v"))
-
-  # Cast mixed vector types to common type
-  if(n_vecs > 1) {
-    attr(x, "v") <- vec_cast_common(!!!attr(x, "v"), .to = ptype)
-  }
-
-  # Apply ordering to attribute vectors
-  i_offset <- cumsum(c(0, lengths(attr(x, "v"))[-n_vecs]))
-  list_unchop(attr(x, "v"))[i_offset[field(x, "i")] + field(x, "x")]
-}
-
-#' @export
-format.vecvec <- function(x, ...) {
-  out <- lapply(attr(x, "v"), format, ...)
-  unlist(
-    .mapply(function(i, x){
-      if(is.na(i)) NA_character_ else out[[i]][[x]]
-    }, list(field(x, "i"), field(x, "x")), NULL)
-  )
-}
-
-restore_class <- function(x) {
-  setdiff(class(x), c("vecvec", "vctrs_rcrd", "vctrs_vctr"))
-}
-
-#' @export
-vec_proxy.vecvec <- function(x, ...) {
-  # Somewhat inefficient, copy pointers to vectors by row
-  vctrs::data_frame(
-    x = field(x, "x"), v = attr(x, "v")[field(x, "i")]
-  )
-}
-
-#' @export
-vec_proxy_equal.vecvec <- function(x, ...) {
-  # TODO - implement using a faster method (e.g. hashing)
-  n_vecs <- length(attr(x, "v"))
-  i_offset <- cumsum(c(0, lengths(attr(x, "v"))[-n_vecs]))
-  list_unchop(lapply(attr(x, "v"), as.list))[i_offset[field(x, "i")] + field(x, "x")]
-}
-
-#' @export
-vec_restore.vecvec <- function(x, to, ..., i = NULL) {
-  # TODO: combine common groups
-  if(vec_is_empty(x)) return(new_vecvec())
-  v_grp <- vec_group_loc(x$v)
-  na_vec <- vapply(v_grp$key, is.null, logical(1L))
-  i_loc <- cumsum(!na_vec)
-  i_loc[na_vec] <- NA_integer_
-
-  res <- new_vecvec(
-    x = v_grp$key[!na_vec],
-    loc = list(
-      i = rep(i_loc, lengths(v_grp$loc))[order(list_unchop(v_grp$loc))],
-      x = x$x
-    ),
-    class = restore_class(to)
-  )
-  return(vecvec_compress(res))
-}
-
-vec_cast_from_vecvec <- function(x, to, ...) {
-  out <- lapply(attr(x, "v"), vec_cast, to = to, ...)
-  list_unchop(.mapply(function(i, x) out[[i]][[x]], new_data_frame(x), NULL))
-}
-
-vec_cast_to_vecvec <- function(x, to, ...) {
-  new_vecvec(list(x), class = restore_class(to))
-}
-
-#' @export
-vec_ptype2.vecvec <- function(x, y, ...) {
-  compat_class <- intersect(restore_class(x), restore_class(y))
-  new_vecvec(class = compat_class)
-}
-
-#' @export
-vec_ptype.vecvec <- function(x, ...) {
-  new_vecvec(class = restore_class(x))
-}
-
-#' @export
-vec_ptype2.vecvec.vecvec <- function(x, y, ...) {
-  compat_class <- intersect(restore_class(x), restore_class(y))
-  new_vecvec(class = compat_class)
-}
-
-
-#' @export
-vec_cast.vecvec.vecvec <- function(x, to, ...) {
+# @method dimnames<- vecvec::vecvec
+#' @rawNamespace S3method(`dimnames<-`,"vecvec::vecvec")
+`dimnames<-.vecvec::vecvec` <- function(x, value) {
+  attr(x, "dimnames") <- value
   x
 }
