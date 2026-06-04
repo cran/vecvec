@@ -1,3 +1,17 @@
+# vecvec 1.1.0
+
+## Improvements
+
+* `print()` method now respects the `max.print` option and prevents ALTREP 
+  materialisation.
+* ALTREP vectors are no longer flattened on creation of vecvec objects.
+
+## Bug fixes
+
+* Fixed `[<-` value replacement with NA indices.
+* Fixed `[<-` incorrectly mutating a `vecvec` when the index selects no
+  elements (e.g. `x[FALSE] <- NA`). The object is now returned unchanged.
+
 # vecvec 1.0.0
 
 The `vecvec` class has been reimplemented using S7, replacing the previous vctrs
