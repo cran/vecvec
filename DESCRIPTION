@@ -1,6 +1,6 @@
 Package: vecvec
 Title: Construct Mixed Type Data Structures with Vectors of Vectors
-Version: 1.1.0
+Version: 1.2.0
 Authors@R: c(
       person(
         given = "Mitchell",
@@ -24,11 +24,11 @@ Encoding: UTF-8
 URL: https://pkg.mitchelloharawild.com/vecvec/,
         https://github.com/mitchelloharawild/vecvec
 BugReports: https://github.com/mitchelloharawild/vecvec/issues
-Config/roxygen2/version: 7.3.3.9000
+Config/roxygen2/version: 8.0.0
 NeedsCompilation: no
-Packaged: 2026-06-03 19:17:36 UTC; mitchell
+Packaged: 2026-06-22 22:37:34 UTC; mitchell
 Author: Mitchell O'Hara-Wild [aut, cre] (ORCID:
     <https://orcid.org/0000-0001-6729-7695>)
 Maintainer: Mitchell O'Hara-Wild <mail@mitchelloharawild.com>
 Repository: CRAN
-Date/Publication: 2026-06-04 05:10:03 UTC
+Date/Publication: 2026-06-23 05:10:08 UTC
