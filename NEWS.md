@@ -1,3 +1,45 @@
+# vecvec 1.3.0
+
+## New features
+
+* Added `vecvec_mapply()`, which applies a vectorised function across
+  multiple (possibly heterogeneously-typed) vectors, batching calls by
+  shared underlying storage slots rather than calling it once per element
+  as `mapply()` does.
+
+## Improvements
+
+* Reworked formatting of array vecvecs to prevent ALTREP materialisation.
+* `duplicated()`/`anyDuplicated()`, `vec_proxy_equal()`, and casting into a
+  `vecvec` are now computed slot-wise instead of materialising every element.
+* ALTREP detection (used to avoid materialisation when merging adjacent slots)
+  now uses a C-level check rather than parsing `.Internal(inspect())`.
+* Added support for casting into a `vecvec` with duplicated indices.
+* Errors, warnings, and messages now use the `cli` package.
+
+## Bug fixes
+
+* `[.vecvec` now compacts slots to actually referenced rows.
+* Added `is.numeric()` method for `vecvec`, which checks the type of its
+  slots rather than the container itself.
+* Added `all.equal()` method for `vecvec`. Previously the default method
+  compared the underlying storage (indices and numeric-only slot content)
+  rather than the represented values, giving misleading results or erroring
+  whenever a slot held a non-numeric type.
+* Fixed `as.data.frame()` on a `vecvec` always erroring. It now wraps the
+  `vecvec` as a single column, as is done with atomic vectors.
+* Fixed `[<-` and `is.na<-` corrupting compressed storage shared by other,
+  unreplaced elements when only some of the sharers were overwritten.
+* Fixed `duplicated()`/`anyDuplicated()` incorrectly destructuring `vctrs`
+  record-style slots (e.g. `vctrs_rcrd`) element-by-element.
+* Fixed cumulative `Math` generics (`cumsum()`, `cumprod()`, `cummax()`,
+  `cummin()`) silently erroring.
+* Fixed `unvecvec()` scattering values with single-bracket indexing, which is
+  column (not row) selection for matrix and data frame results. This silently
+  gave wrong answers whenever a slot held more than one distinct row, and
+  hard-errored whenever an `NA` index was present. It now uses
+  `vctrs::vec_slice()`/`vctrs::vec_assign()`, which respect rows.
+
 # vecvec 1.2.0
 
 ## Improvements

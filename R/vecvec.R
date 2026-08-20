@@ -89,11 +89,17 @@ vecvec <- function(...) {
 #' @export
 unvecvec <- function(x, ptype = NULL) {
   if (!is_vecvec(x)) {
-    stop("`x` must be a vecvec object", call. = FALSE)
+    cli::cli_abort(
+      c(
+        "{.arg x} must be a {.cls vecvec} object.",
+        "i" = "Create one with {.fn vecvec}."
+      ),
+      call = NULL
+    )
   }
 
   if ((len <- length(x)) == 0L) {
-    return(unlist(x@x))
+    return(vec_c(!!!x@x))
   }
 
   # Cast mixed vector types to common type
@@ -106,8 +112,10 @@ unvecvec <- function(x, ptype = NULL) {
 
   # Construct output single-typed vector
   res <- vec_init(ptype, n = len)
-  pos <- !is.na(S7_data(x))
-  res[pos] <- vec_c(!!!x@x)[S7_data(x)[pos]]
+  pos <- as.vector(!is.na(S7_data(x)))
+  if (any(pos)) {
+    res <- vec_assign(res, pos, vec_slice(vec_c(!!!x@x), S7_data(x)[pos]))
+  }
   res
 }
 
@@ -115,24 +123,39 @@ unvecvec <- function(x, ptype = NULL) {
 # Display methods
 # ------------------------------------------------------------------------------
 method(print, class_vecvec) <- function(x, max = getOption("max.print"), ...) {
-  vctrs::obj_print_header(x)
-  
-  # Print values directly to avoid vctrs obj_print ALTREP materialisation
-  if (length(x) > 0L) {
-    print(
-      format(x[seq_len(min(length(x), max))]),
-      quote = FALSE
-    )
+  d <- dim(x)
+  cat("<", vec_ptype_full(x), "[", paste0(d %||% length(x), collapse = ","), "]>\n", sep = "")
+
+  n <- length(x)
+  if (n > 0L) {
+    n_show <- min(n, max)
+
+    if (!is.null(d)) {
+      if (n_show < n) {
+        # Map the first n_show display-order (row-major) positions to their
+        # column-major storage indices by permuting the first two dimensions.
+        cm_idx <- aperm(array(seq_len(n), d), c(2L, 1L, seq_along(d)[-(1:2)]))[seq_len(n_show)]
+        fmt_arr <- character(n)
+        fmt_arr[cm_idx] <- format(x[cm_idx])
+        dim(fmt_arr) <- d
+        dimnames(fmt_arr) <- dimnames(x)
+        print(fmt_arr, quote = FALSE, max = n_show)
+      } else {
+        print(format(x), quote = FALSE, max = max)
+      }
+    } else {
+      # Vector: subset before formatting to avoid materialising all n elements.
+      print(format(x[seq_len(n_show)]), quote = FALSE)
+      if (n > max) {
+        cat(sprintf(
+          '[ reached \'max\' / getOption("max.print") -- omitted %d entries ]\n',
+          n - max
+        ))
+      }
+    }
   }
-  
-  # Add usual default print footer if there are more values than 'max'
-  if (length(x) > max) {
-    cat(
-      "[ reached 'max' / getOption(\"max.print\") -- omitted ",
-      length(x) - getOption("max.print"),
-      " entries ]"
-    )
-  }
+
+  invisible(x)
 }
 method(format, class_vecvec) <- function(x, ...) {
   fmt <- vec_c(!!!lapply(x@x, format, ...), .ptype = character())[S7_data(x)]
@@ -177,35 +200,29 @@ method(`[`, class_vecvec) <- function(x, i, ...) {
 
   idx_nn <- idx[not_na]
 
-  # Slot start positions in original x@x
-  orig_starts <- c(0L, cumsum(lengths(x@x[-length(x@x)])))
-
-  # Which original slot each selected element belongs to
-  pos <- findInterval(idx_nn, orig_starts, left.open = TRUE)
+  # Which original slot (and within-slot position) each selected element belongs to
+  at <- vecvec_locate(x@x, idx_nn)
+  pos <- at$slot
 
   # Drop entirely unreferenced slots
   keep <- sort(unique(pos))
   all_kept <- length(keep) == length(x@x)
 
   x@x <- x@x[keep]
-  orig_starts <- orig_starts[keep]
 
   new_slot <- match(pos, keep)
-  local_idx <- idx_nn - orig_starts[new_slot] # 1-based within slot
+  local_idx <- at$within # 1-based within slot
 
-  # TODO - remove unreferenced values from x@x if *all* references are dropped
-  if (!anyDuplicated(idx_nn)) {
-    slot_lengths <- lengths(x@x)
-    groups <- split(seq_along(new_slot), new_slot)
+  slot_lengths <- lengths(x@x)
+  groups <- split(seq_along(new_slot), new_slot)
 
-    for (k in seq_along(x@x)) {
-      el <- groups[[k]]
-      sel <- local_idx[el]
-      u <- unique(sel)
-      if (length(u) < slot_lengths[k]) {
-        local_idx[el] <- match(sel, u)
-        x@x[[k]] <- x@x[[k]][u]
-      }
+  for (k in seq_along(x@x)) {
+    el <- groups[[k]]
+    sel <- local_idx[el]
+    u <- unique(sel)
+    if (length(u) < slot_lengths[k]) {
+      local_idx[el] <- match(sel, u)
+      x@x[[k]] <- x@x[[k]][u]
     }
   }
 
@@ -220,10 +237,8 @@ method(`[`, class_vecvec) <- function(x, i, ...) {
 }
 
 method(`[[`, class_vecvec) <- function(x, i, ...) {
-  idx <- S7_data(x)[i]
-  len <- c(0L, cumsum(lengths(x@x[-length(x@x)])))
-  pos <- findInterval(idx, len, left.open = TRUE)
-  x@x[[pos]][[idx - len[pos]]]
+  at <- vecvec_locate(x@x, S7_data(x)[i])
+  x@x[[at$slot]][[at$within]]
 }
 
 # ------------------------------------------------------------------------------

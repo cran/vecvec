@@ -44,9 +44,61 @@ method(vec_restore, class_vecvec) <- function(x, to, ...) {
 
 # Comparison proxies
 method(vec_proxy_equal, class_vecvec) <- function(x, ...) {
-  # This is inefficient, but seems necessary for vctrs machinery.
-  # Directly using `==` is faster as it applies on overlapping vctrs directly.
-  data_frame(x = as.list(x), na = ifelse(is.na(x), NA, FALSE))
+  # Build the equality proxy slot-wise on same-ptype slots
+  n <- vec_size(x)
+  idx <- S7_data(x)
+
+  # No storage at all -> every element is necessarily an unassigned index.
+  if (length(x@x) == 0L) {
+    return(data_frame(.group = rep(NA_integer_, n)))
+  }
+
+  # Map each stored position to (slot, position-within-slot).
+  slot_len <- lengths(x@x)
+  at <- vecvec_locate(x@x, idx)
+  slot <- at$slot
+  local_pos <- at$within
+
+  # Group slots sharing a common ptype, as `duplicated()` does - only slots
+  # with identical ptypes can ever compare equal to one another.
+  ptypes <- lapply(x@x, `[`, 0L)
+  uniq_ptypes <- unique(ptypes)
+  loc <- lapply(
+    uniq_ptypes,
+    function(k) which(vapply(ptypes, identical, logical(1), k))
+  )
+  slot_group <- integer(length(ptypes))
+  for (g in seq_along(loc)) slot_group[loc[[g]]] <- g
+
+  # Per-element group id; unassigned indices (NA) get the reserved NA group.
+  elem_group <- ifelse(is.na(slot), NA_integer_, slot_group[slot])
+
+  result <- data_frame(.group = elem_group)
+  for (g in seq_along(loc)) {
+    member_slots <- loc[[g]]
+    rows <- which(elem_group == g)
+    if (length(rows) == 0L) next
+
+    # Compute the proxy once for the whole ptype group
+    proxy_g <- vec_proxy_equal(vec_c(!!!x@x[member_slots]), ...)
+    if (!is.data.frame(proxy_g)) proxy_g <- data_frame(x = proxy_g)
+
+    # Position of each member row within the group's concatenation.
+    member_lens <- slot_len[member_slots]
+    offsets <- c(0L, cumsum(member_lens))
+    member_rank <- match(slot[rows], member_slots)
+    grp_pos <- offsets[member_rank] + local_pos[rows]
+
+    # Scatter the small per-group proxy into `n` rows via one vectorized
+    # slice, leaving non-member rows as NA placeholders.
+    filled <- vec_init(proxy_g, n)
+    filled <- vec_assign(filled, rows, vec_slice(proxy_g, grp_pos))
+    names(filled) <- paste0("g", g, "_", names(filled))
+
+    result <- vec_cbind(result, filled)
+  }
+
+  result
 }
 method(vec_proxy_compare, class_vecvec) <- function(x, ...) {
   xtfrm(x, ...)
@@ -92,23 +144,39 @@ vec_ptype2_vecvec <- function(x, y, ...) {
 vec_cast_to_vecvec <- function(x, to, ...) {
   # If input and ptype have incompatible structure, produce flat vecvec type
   if (length(x) != length(to)) return(S7_class(to)(list(x)))
-  
-  # TODO - handle replicated indices
-  if (anyDuplicated(S7_data(to))) {
-    stop("Casting to vecvec with duplicated indices is not supported.", call. = FALSE)
+
+  # Nothing to cast into
+  if (length(to@x) == 0L) return(to)
+
+  idx <- S7_data(to)
+  pos <- vecvec_locate(to@x, idx)$slot
+
+  if (!anyDuplicated(idx)) {
+    # Match index positions and vec_cast the individual vectors
+    loc <- vec_split(x, pos)
+    to@x <- .mapply(
+      function(i, val) vec_cast(val, to@x[[i]], ...),
+      list(loc$key, loc$val), NULL
+    )
+
+    return(to)
   }
 
-  # Match index positions and vec_cast the individual vectors
-  idx <- S7_data(to)
-  len <- c(0L, cumsum(lengths(to@x[-length(to@x)])))
-  pos <- findInterval(idx, len, left.open = TRUE)
-  loc <- vec_split(x, pos)
-  to@x <- .mapply(
-    function(i, val) vec_cast(val, to@x[[i]], ...),
-    list(loc$key, loc$val), NULL
-  )
+  # `to`'s stored positions are duplicated, so several logical elements can
+  # share a single stored value. `x` may supply different values for those
+  # common elements, so we can't simply overwrite in place.
+  loc <- vec_split(seq_along(x), pos)
+  new_x <- vector("list", nrow(loc))
+  new_idx <- integer(length(x))
+  offset <- 0L
+  for (g in seq_len(nrow(loc))) {
+    positions <- loc$val[[g]]
+    new_x[[g]] <- vec_cast(vec_slice(x, positions), to@x[[loc$key[[g]]]], ...)
+    new_idx[positions] <- offset + seq_along(positions)
+    offset <- offset + length(positions)
+  }
 
-  to
+  S7_class(to)(x = new_x, i = new_idx)
 }
 vec_cast_from_vecvec <- function(x, to, ...) {
   unvecvec(x, ptype = to)
