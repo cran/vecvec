@@ -19,12 +19,13 @@ method(vec_restore, class_vecvec) <- function(x, to, ...) {
     return(out)
   }
   
-  # Identify groups of vectors
-  # TODO - this destroys altrep
-  grp <- data_frame(key = unique(x$x))
-  grp$loc <- split(seq_along(x$i), match(x$x, grp$key))
+  # Group rows by the address of their vector list (avoids quadratic hashing)
+  addr <- vapply(x$x, rlang::obj_address, character(1L))
+  key <- unique(addr)
+  grp_id <- match(addr, key)
+  grp <- data_frame(key = x$x[match(key, addr)])
+  grp$loc <- split(seq_along(x$i), grp_id)
 
-  # val <- x$x[vapply(grp$loc, `[[`, integer(1), 1L)]
   # vctrs seems to drop list() to NULL internally somewhere? - fix it
   val <- lapply(grp$key, function(x) if (is.null(x)) list() else x)
 
@@ -33,12 +34,17 @@ method(vec_restore, class_vecvec) <- function(x, to, ...) {
     0L,
     cumsum(vapply(val[-length(val)], function(x) sum(lengths(x)), integer(1)))
   )
-  idx <- lapply(vec_seq_along(grp), function(i) x$i[grp$loc[[i]]] + len[i])
+  # Offset indices, scattered back to their original row order
+  idx <- x$i
+  for (g in vec_seq_along(grp)) {
+    loc <- grp$loc[[g]]
+    idx[loc] <- idx[loc] + len[g]
+  }
 
   # Restore the vecvec S7 object
   S7_class(to)(
     x = unlist(val, recursive = FALSE),
-    i = unlist(idx, recursive = FALSE)
+    i = idx
   )
 }
 
@@ -178,6 +184,9 @@ vec_cast_to_vecvec <- function(x, to, ...) {
 
   S7_class(to)(x = new_x, i = new_idx)
 }
+# Cast between two vecvecs of the same class. A vecvec holds any mix of slot
+# types, so any vecvec of the class already is a valid value of its type.
+vec_cast_same_vecvec <- function(x, to, ...) x
 vec_cast_from_vecvec <- function(x, to, ...) {
   unvecvec(x, ptype = to)
 }

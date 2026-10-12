@@ -1,3 +1,25 @@
+# vecvec 1.4.0
+
+## Improvements
+
+* Restoring a `vecvec` from its vctrs proxy is much faster (no longer quadratic
+  in its length). Rows are now grouped by the identity of their slots rather 
+  than hashing their contents once per row.
+* `vecvec_apply()` now splices `vecvec` results from `.f` into the result
+  instead of nesting them, so `unvecvec()` simplifies them directly.
+  
+## Bug fixes
+
+* `vec_c()` and `vec_rbind()` (and so `dplyr::bind_rows()`) no longer
+  reorder elements when the inputs' storage is interleaved, e.g.
+  `vec_c(a, b, a)` previously returned the elements of `b` last.
+* `c()` of a single zero-length `vecvec` (e.g. `c(x[0])`) no longer errors
+  with "Underlying data must be <integer> not <list>".
+* `duplicated()`, `anyDuplicated()` and `unique()` now detect duplicates
+  among elements whose indices point at the same stored value, e.g. after
+  `x[c(1, 1)]`. Missing indices are now duplicates of each other rather than
+  `NA`.
+
 # vecvec 1.3.0
 
 ## New features
