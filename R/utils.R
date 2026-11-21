@@ -96,7 +96,7 @@ is_altrep <- function(x) {
 # @return A list with `slot` (which element of `slots` each position falls
 #   in) and `within` (the corresponding 1-based position inside that slot).
 vecvec_locate <- function(slots, pos) {
-  bounds <- c(0L, cumsum(lengths(slots)))
+  bounds <- c(0L, cumsum(list_sizes(slots)))
   slot <- findInterval(pos, bounds, left.open = TRUE)
   list(slot = slot, within = pos - bounds[slot])
 }
@@ -120,8 +120,8 @@ vecvec_pair_key <- function(slot_x, slot_y, n_y) {
 # Align multiple same-length vecvec objects to a common element-position
 # grouping: locates each argument's underlying (slot, within-slot) position
 # for every element (via `vecvec_locate()`), then partitions positions into
-# maximal contiguous runs that draw from the same tuple of underlying slots
-# across all arguments.
+# groups that draw from the same tuple of underlying slots across all
+# arguments (not necessarily contiguous).
 #
 # A run boundary occurs wherever *any* argument's slot index changes between
 # consecutive positions - equivalent to encoding the tuple of slot indices as
@@ -143,7 +143,7 @@ vecvec_pair_key <- function(slot_x, slot_y, n_y) {
 #   - `groups`: positions partitioned into contiguous runs that share a fixed
 #     tuple of underlying slots, as returned by `split()`.
 vecvec_align <- function(args) {
-  at <- lapply(args, function(a) vecvec_locate(a@x, S7_data(a)))
+  at <- lapply(args, function(a) vecvec_locate(a@x, vv_index(a)))
   slot <- lapply(at, `[[`, "slot")
   within <- lapply(at, `[[`, "within")
 
@@ -151,21 +151,61 @@ vecvec_align <- function(args) {
   if (n == 0L) {
     return(list(slot = slot, within = within, groups = list()))
   }
-  # A missing (NA) slot index - from an NA position in one of the args - must
-  # not be allowed to `NA`-poison `changed` via `!=`, since `cumsum()` would
-  # then propagate that `NA` to every subsequent position (and `split()`
-  # would silently drop the lot). Treat it as always a boundary instead, so
-  # an NA position forms its own singleton run rather than corrupting runs
-  # after it.
-  changed <- Reduce(`|`, lapply(slot, function(s) {
-    prev <- s[-n]
-    curr <- s[-1L]
-    c(TRUE, is.na(prev) | is.na(curr) | curr != prev)
-  }))
-  group <- cumsum(changed)
+  # Group by the combination of slots, wherever the positions are. Positions
+  # with a missing (NA) slot index in some arg share a group per NA pattern;
+  # consumers skip any group whose first position has an NA slot.
+  names(slot) <- paste0("s", seq_along(slot))
+  groups <- vctrs::vec_group_loc(vctrs::new_data_frame(slot, n = n))$loc
 
-  list(slot = slot, within = within, groups = split(seq_len(n), group))
+  list(slot = unname(slot), within = within, groups = groups)
 }
 
 # Shim for `%||%`, which is only in base R from 4.4.0.
 `%||%` <- function(x, y) if (is.null(x)) y else x
+
+# The base vector of a vecvec is an ALTREP double vector that resolves to the
+# stored *values* (so base R / C code never sees raw indices). The index lives
+# in the ALTREP and is accessed with these helpers instead of `S7_data()`.
+
+# Create the (attribute-free) ALTREP base vector for an integer index into the
+# list of stored vectors `slots`.
+vv_alt <- function(i, slots) {
+  .Call("vecvec_alt_new", as.integer(i), slots, PACKAGE = "vecvec")
+}
+
+# The stored vectors of a vecvec (the value of `@x`), held by the ALTREP base.
+vv_slots <- function(x) .Call("vecvec_alt_slots", x, PACKAGE = "vecvec")
+
+# The integer index of a vecvec, with its dim/dimnames/names.
+vv_index <- function(x) {
+  idx <- .Call("vecvec_alt_index", x, PACKAGE = "vecvec")
+  for (a in c("dim", "dimnames", "names")) {
+    v <- attr(x, a, exact = TRUE)
+    if (!is.null(v)) attr(idx, a) <- v
+  }
+  idx
+}
+
+# Re-mirror the ALTREP data in the `_vecvec` attribute after the attributes of
+# `x` were replaced wholesale. `identical()` only sees attributes and the base
+# data, so this is what makes it tell vecvecs apart (see `vecvec_alt_new()`).
+vv_mirror <- function(x) .Call("vecvec_alt_mirror", x, PACKAGE = "vecvec")
+
+# Replace the index of a vecvec (like `S7_data<-`, the dim/dimnames/names of 
+# `value` are used for the result).
+`vv_index<-` <- function(x, value) {
+  at <- attributes(x)
+  at[c("dim", "dimnames", "names")] <- NULL
+  va <- attributes(value)
+  out <- vv_alt(value, vv_slots(x))
+  attributes(out) <- c(at, va[intersect(names(va), c("dim", "dimnames", "names"))])
+  vv_mirror(out)
+}
+
+# Rebuild the ALTREP base of a vecvec so that it resolves against `slots`, the
+# new value of `@x`.
+vv_rebuild <- function(x, slots) {
+  out <- .Call("vecvec_alt_rebuild", x, slots, PACKAGE = "vecvec")
+  attributes(out) <- attributes(x)
+  vv_mirror(out)
+}

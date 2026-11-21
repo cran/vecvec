@@ -112,9 +112,9 @@ unvecvec <- function(x, ptype = NULL) {
 
   # Construct output single-typed vector
   res <- vec_init(ptype, n = len)
-  pos <- as.vector(!is.na(S7_data(x)))
+  pos <- as.vector(!is.na(vv_index(x)))
   if (any(pos)) {
-    res <- vec_assign(res, pos, vec_slice(vec_c(!!!x@x), S7_data(x)[pos]))
+    res <- vec_assign(res, pos, vec_slice(vec_c(!!!x@x), vv_index(x)[pos]))
   }
   res
 }
@@ -158,7 +158,7 @@ method(print, class_vecvec) <- function(x, max = getOption("max.print"), ...) {
   invisible(x)
 }
 method(format, class_vecvec) <- function(x, ...) {
-  fmt <- vec_c(!!!lapply(x@x, format, ...), .ptype = character())[S7_data(x)]
+  fmt <- vec_c(!!!lapply(x@x, format, ...), .ptype = character())[vv_index(x)]
   dim(fmt) <- dim(x)
   dimnames(fmt) <- dimnames(x)
   fmt
@@ -185,13 +185,15 @@ method(format, class_vecvec) <- function(x, ...) {
 #' is_vecvec(1:3)
 #'
 #' @export
-is_vecvec <- function(x) S7_inherits(x, class_vecvec)
+# `inherits()` on the S7 class vector is equivalent to S7_inherits() here and
+# avoids S7's per-call overhead; this check runs once per input in c().
+is_vecvec <- function(x) inherits(x, "vecvec::vecvec")
 
 # ------------------------------------------------------------------------------
 # Indexing methods
 # ------------------------------------------------------------------------------
 method(`[`, class_vecvec) <- function(x, i, ...) {
-  idx <- S7_data(x)[i, ...]
+  idx <- vv_index(x)[i, ...]
   not_na <- !is.na(idx)
 
   if (!any(not_na)) {
@@ -213,7 +215,7 @@ method(`[`, class_vecvec) <- function(x, i, ...) {
   new_slot <- match(pos, keep)
   local_idx <- at$within # 1-based within slot
 
-  slot_lengths <- lengths(x@x)
+  slot_lengths <- list_sizes(x@x)
   groups <- split(seq_along(new_slot), new_slot)
 
   for (k in seq_along(x@x)) {
@@ -222,22 +224,22 @@ method(`[`, class_vecvec) <- function(x, i, ...) {
     u <- unique(sel)
     if (length(u) < slot_lengths[k]) {
       local_idx[el] <- match(sel, u)
-      x@x[[k]] <- x@x[[k]][u]
+      x@x[[k]] <- vec_slice(x@x[[k]], u)
     }
   }
 
   # Assign new vecvec indices
-  new_starts <- c(0L, cumsum(lengths(x@x[-length(x@x)])))
+  new_starts <- c(0L, cumsum(list_sizes(x@x[-length(x@x)])))
   idx[not_na] <- new_starts[new_slot] + local_idx
   dim(x) <- NULL
-  S7_data(x) <- idx
+  vv_index(x) <- idx
   dim(x) <- dim(idx)
 
   x
 }
 
 method(`[[`, class_vecvec) <- function(x, i, ...) {
-  at <- vecvec_locate(x@x, S7_data(x)[i])
+  at <- vecvec_locate(x@x, vv_index(x)[i])
   x@x[[at$slot]][[at$within]]
 }
 
@@ -249,24 +251,14 @@ method(c, class_vecvec) <- function(..., recursive = FALSE) {
   is_vv <- vapply(dots, is_vecvec, logical(1L))
   dots[!is_vv] <- lapply(dots[!is_vv], vecvec)
 
-  # TODO - reduce structure into a common vecvec
-  i_offsets <- cumsum(vapply(
-    dots[-length(dots)],
-    function(x) sum(lengths(x@x)),
-    integer(1L)
-  ))
-
-  x <- lapply(dots, function(x) x@x)
-  # Collect each input's (offset) indices as list elements, so that a single
+  # Read each input's slots once through the cheap internal accessor (`@x`
+  # dispatches through S7), then offset each input's indices past the slots of
+  # the inputs before it. Collect indices as list elements so that a single
   # zero-length input still unlists to integer() rather than NULL.
-  i <- c(
-    list(S7_data(dots[[1L]])),
-    .mapply(
-      function(x, j) S7_data(x) + j,
-      list(x = dots[-1L], j = i_offsets),
-      NULL
-    )
-  )
+  x <- lapply(dots, vv_slots)
+  n_x <- vapply(x, function(s) sum(list_sizes(s)), integer(1L))
+  offset <- c(0L, cumsum(n_x)[-length(n_x)])
+  i <- .mapply(function(v, j) vv_index(v) + j, list(dots, offset), NULL)
 
   S7_class(..1)(
     x = unlist(x, recursive = FALSE),

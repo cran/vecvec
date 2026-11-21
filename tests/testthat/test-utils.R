@@ -34,10 +34,47 @@ test_that("vecvec() construction merges adjacent non-ALTREP slots of the same ty
   expect_equal(unvecvec(x), c(1.5, 2.5, 3.5))
 })
 
-test_that("vecvec_align() isolates an NA index as its own group instead of dropping everything after it", {
+test_that("vecvec_align() keeps an NA index in its own group instead of dropping everything after it", {
   x <- vecvec(c(1, 2, 3, 10))[c(1, 2, 3, NA, 4)]
   y <- vecvec(as.list(10 * (1:5)))
 
   al <- vecvec_align(list(x, y))
-  expect_equal(al$groups, list(`1` = 1:3, `2` = 4L, `3` = 5L))
+  expect_equal(sort(unlist(al$groups)), 1:5)
+  expect_true(any(vapply(al$groups, identical, logical(1L), 4L)))
+})
+
+test_that("vecvec_align() groups interleaved positions by slot combination", {
+  n <- 50
+  il <- class_vecvec(list(as.double(1:n), as.integer(1:n)), as.vector(rbind(1:n, n + 1:n)))
+  al <- vecvec_align(list(il))
+  expect_length(al$groups, 2L)
+  expect_equal(al$groups[[1]], seq(1L, 2L * n, by = 2L))
+})
+
+test_that("vecvec_mapply() calls .f once per slot combination for interleaved input", {
+  n <- 50
+  il <- class_vecvec(list(as.double(1:n), as.integer(1:n)), as.vector(rbind(1:n, n + 1:n)))
+  calls <- 0L
+  res <- vecvec_mapply(list(il), function(v) { calls <<- calls + 1L; v + 1 }, ptype = double())
+  expect_equal(calls, 2L)
+  expect_equal(res, as.double(unvecvec(il, ptype = double())) + 1)
+
+  calls <- 0L
+  vecvec_mapply(list(il, il[c(NA, seq_len(2 * n - 1))]), function(a, b) { calls <<- calls + 1L; a }, ptype = double())
+  expect_lte(calls, 4L)
+})
+
+test_that("Ops on interleaved vecvecs match element-wise results", {
+  n <- 50
+  il <- class_vecvec(list(as.double(1:n), as.integer(1:n)), as.vector(rbind(1:n, n + 1:n)))
+  expect_equal(unvecvec(il + il[rev(seq_len(2 * n))], ptype = double()),
+               as.double(unvecvec(il, ptype = double())) + rev(as.double(unvecvec(il, ptype = double()))))
+})
+
+test_that("vecvec_flatten_adj() merges many adjacent slots in one pass", {
+  x <- lapply(1:5000, function(i) c(i, i) + 0)
+  expect_length(vecvec_flatten_adj(x), 1L)
+  mixed <- list(1, 2, "a", "b", 3)
+  out <- vecvec_flatten_adj(mixed)
+  expect_equal(out, list(c(1, 2), c("a", "b"), 3))
 })

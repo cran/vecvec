@@ -13,19 +13,19 @@
   if (is.logical(i)) i[is.na(i)] <- FALSE
 
   # Recycle `value` to the length of `i`
-  replacements <- S7_data(x)[i, ...]
+  replacements <- vv_index(x)[i, ...]
   if (length(replacements) == 0L) return(x)
   value <- vec_recycle(value, size = length(replacements))
 
   # Some stored values referenced by the replaced positions may still be
   # referenced by *surviving* (non-replaced) positions, e.g. when duplicated
   # indices share compressed storage (#18). Build a mask, shaped like
-  # `S7_data(x)`, that is TRUE at every position being replaced, so we can
+  # `vv_index(x)`, that is TRUE at every position being replaced, so we can
   # tell which stored values remain referenced by the untouched positions.
   d <- dim(x)
-  mask <- if (is.null(d)) logical(length(S7_data(x))) else array(FALSE, dim = d)
+  mask <- if (is.null(d)) logical(length(vv_index(x))) else array(FALSE, dim = d)
   mask[i, ...] <- TRUE
-  still_referenced <- unique(S7_data(x)[!mask])
+  still_referenced <- unique(vv_index(x)[!mask])
 
   # Remove unreferenced values from `x@x`
   vec_rm <- unique(replacements)
@@ -34,30 +34,35 @@
   if (is.array(x)) {
     # Also remove out-of-bounds indices produced
     # by array() when length(x) != prod(dim(x))
-    nx <- sum(lengths(x@x))
+    nx <- sum(list_sizes(x@x))
     if (length(x) < nx) {
       vec_rm <- c(vec_rm, seq(from = length(x) + 1L, to = nx))
     }
   }
-  vec_starts <- c(0L, cumsum(lengths(x@x)[-length(x@x)]))
+  vec_starts <- c(0L, cumsum(list_sizes(x@x)[-length(x@x)]))
   vec_idx <- findInterval(vec_rm, vec_starts, left.open = TRUE)
   vec_pos <- vec_split(vec_rm - vec_starts[vec_idx], vec_idx)
   for (k in seq_len(nrow(vec_pos))) {
-    x@x[[vec_pos$key[[k]]]] <- x@x[[vec_pos$key[[k]]]][-vec_pos$val[[k]]]
+    x@x[[vec_pos$key[[k]]]] <- vec_slice(x@x[[vec_pos$key[[k]]]], -vec_pos$val[[k]])
   }
 
   # Append `value` to the end of `x@x` and update `x@i` to point to the new values
   if (is_vecvec(value)) {
     x@x <- c(x@x, value@x)
-    idx <- S7_data(value) + length(x)
+    idx <- vv_index(value) + length(x)
   } else {
     x@x <- c(x@x, list(value))
     idx <- seq_along(value) + length(x)
   }
-  S7_data(x)[i, ...] <- idx
+  indices <- vv_index(x)
+  indices[i, ...] <- idx
+  vv_index(x) <- indices
+  
   
   # Rank local indices
-  S7_data(x) <- vec_rank(as.integer(S7_data(x)), ties = "dense")
+  indices <- vv_index(x)
+  indices[] <- vec_rank(as.integer(indices), ties = "dense")
+  vv_index(x) <- indices
 
   # Crude but fast defragmentation of adjacent same-type vectors
   vecvec_flatten_adj(x)
@@ -99,7 +104,7 @@
   }
   if (length(value) == 0L) return(x)
 
-  idx <- S7_data(x)
+  idx <- vv_index(x)
   vec_na <- unique(idx[value])
   vec_na <- vec_na[!is.na(vec_na)]
   if (length(vec_na) == 0L) return(x)
@@ -114,14 +119,15 @@
   vec_na_shared <- intersect(vec_na, still_referenced)
   vec_na_safe <- setdiff(vec_na, vec_na_shared)
 
-  vec_starts <- c(0L, cumsum(lengths(x@x)[-length(x@x)]))
+  vec_starts <- c(0L, cumsum(list_sizes(x@x)[-length(x@x)]))
 
   # Stored positions with no surviving reference: NA them in place.
   if (length(vec_na_safe)) {
     vec_idx <- findInterval(vec_na_safe, vec_starts, left.open = TRUE)
     vec_pos <- vec_split(vec_na_safe - vec_starts[vec_idx], vec_idx)
     for (k in seq_len(nrow(vec_pos))) {
-      x@x[[vec_pos$key[[k]]]][vec_pos$val[[k]]] <- NA
+      slot <- x@x[[vec_pos$key[[k]]]]
+      x@x[[vec_pos$key[[k]]]] <- vec_assign(slot, vec_pos$val[[k]], vec_init(slot))
     }
   }
 
@@ -136,9 +142,8 @@
     for (k in seq_len(nrow(vec_pos))) {
       slot <- vec_pos$key[[k]]
       local <- vec_pos$val[[k]]
-      elt <- x@x[[slot]][local]
-      is.na(elt) <- TRUE
-      base <- sum(lengths(x@x))
+      elt <- vec_init(x@x[[slot]], length(local))
+      base <- sum(list_sizes(x@x))
       x@x <- c(x@x, list(elt))
       remap_from <- c(remap_from, vec_starts[slot] + local)
       remap_to <- c(remap_to, base + seq_along(local))
@@ -149,7 +154,7 @@
     tmp <- idx[value]
     tmp[touched] <- remap_to[m[touched]]
     idx[value] <- tmp
-    S7_data(x) <- idx
+    vv_index(x) <- idx
   }
 
   # Crude but fast defragmentation of adjacent same-type vectors

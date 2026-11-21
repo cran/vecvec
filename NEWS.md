@@ -1,3 +1,47 @@
+# vecvec (development version)
+
+## Improvements
+
+* `vecvec_mapply()` and `Ops` now call `.f` / the operator once per distinct
+  combination of underlying slots, rather than once per contiguous run of
+  positions. Interleaved vectors (e.g. from `x[order(...)]`) no longer make one
+  call per element, and `Ops` is no longer quadratic for them. `.f` receives
+  every position that shares a slot combination (in position order), so it must
+  be vectorised and element-wise, as documented.
+
+* Merging adjacent same-type slots (in `class_vecvec()`, `c()`, etc.) is now
+  linear in the number of slots rather than quadratic.
+
+# vecvec 1.5.0
+
+## Improvements
+
+* The base vector of a `vecvec` is now an ALTREP double vector that resolves to
+  the stored values, instead of an integer index. Base R and C code that reads a
+  `vecvec` directly, such as `lm()`, `data.matrix()` and `prcomp()` on data
+  frames with `vecvec` columns, now uses the values rather than the indices.
+  Stored values with no numeric reading (e.g. character) resolve to `NA`.
+  Classed numeric vectors (e.g. cyclical time) resolve through their
+  `as.double()` method, so the base agrees with `as.numeric()`.
+  `is.integer()` is now `FALSE`.
+
+* `identical()` now tells `vecvec`s with different values or indices apart. The
+  stored vectors and index are mirrored in a `_vecvec` attribute (the same
+  object as the ALTREP data, so it uses no extra memory and is serialized once),
+  as `identical()` can't see ALTREP data and the base resolves non-numeric slots
+  to `NA`. Previously it was `TRUE` for e.g. `vecvec("a")` and `vecvec("b")`.
+
+* Updates for compatibility with S7 > 0.2.2.
+
+## Bug fixes
+
+* Slots that are matrices or data frames are now measured and subset by row
+  (with `vec_size()` and `vec_slice()`), instead of by cell or column with
+  `length()` and `[`. This fixes subsetting, replacement, `c()` and
+  `vecvec_apply()` for `vecvec`s containing these vector types.
+* `[<-` on an array `vecvec` (e.g. `x[i, j] <- value`) no longer drops the
+  `dimnames`.
+
 # vecvec 1.4.0
 
 ## Improvements

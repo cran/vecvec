@@ -12,10 +12,10 @@ method(is.numeric, class_vecvec) <- function(x) {
 
 method(is.na, class_vecvec) <- function(x) {
   # Missing values in vecvec indices or values are both considered NA.
-  is.na(S7_data(x)) | unvecvec(vecvec_apply(x, is.na), ptype = logical())
+  is.na(vv_index(x)) | unvecvec(vecvec_apply(x, is.na), ptype = logical())
 }
 method(anyNA, class_vecvec) <- function(x, recursive = FALSE) {
-  if (anyNA(S7_data(x))) return(TRUE)
+  if (anyNA(vv_index(x))) return(TRUE)
   
   for (v in x@x) {
     if (anyNA(v, recursive = recursive)) return(TRUE)
@@ -59,13 +59,13 @@ method(na.exclude, class_vecvec) <- function(object, ...) na.drop(object, class 
 #   `incomparables`, the ids to pass on to base `duplicated()`.
 vecvec_dup_id <- function(x, incomparables = FALSE) {
   # Find common vector types
-  ptypes <- lapply(x@x, `[`, 0L)
+  ptypes <- lapply(x@x, vec_slice, 0L)
   loc <- lapply(
     unique(ptypes),
     function(k) which(vapply(ptypes, identical, logical(1), k))
   )
 
-  slot_len <- lengths(x@x)
+  slot_len <- list_sizes(x@x)
   offsets <- c(0L, cumsum(slot_len))
   canon <- integer(sum(slot_len))
   inc <- logical(sum(slot_len))
@@ -80,7 +80,7 @@ vecvec_dup_id <- function(x, incomparables = FALSE) {
     }
   }
 
-  id <- canon[S7_data(x)]
+  id <- canon[vv_index(x)]
   inc_id <- unique(canon[inc])
   # Missing indices are treated as missing values
   if (!isFALSE(incomparables) && anyNA(incomparables)) {

@@ -33,12 +33,22 @@
 #' @export
 class_vecvec <- new_class(
   "vecvec",
-  parent = class_integer,
+  parent = class_double,
   properties = list(
-    x = class_list
+    x = new_property(
+      class_list,
+      # The stored vectors live in the ALTREP base (not an attribute), so they
+      # are serialized only once. Rebuild the base whenever they change.
+      getter = function(self) vv_slots(self),
+      setter = function(self, value) vv_rebuild(self, value)
+    )
   ),
-  constructor = function(x = list(), i = seq_len(sum(lengths(x)))) {
-    new_object(i, x = vecvec_flatten_adj(x))
+  constructor = function(x = list(), i = seq_len(sum(list_sizes(x)))) {
+    x <- vecvec_flatten_adj(x)
+    # new_object() must be called directly from the constructor (S7 <= 0.2.2
+    # finds the class via sys.function(-1)), so not inside vv_mirror().
+    out <- new_object(vv_alt(i, x))
+    vv_mirror(out)
   },
   validator = function(self) {
     vec <- vapply(self@x, vec_is, logical(1L))
